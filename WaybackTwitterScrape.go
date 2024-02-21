@@ -52,9 +52,11 @@ func main() {
 	loadProxies(homeDirectory, &proxies)
 	fmt.Printf("\nLoaded %d proxies from file\n", len(proxies))
 
-	for !validUsername() {
+	firstRun := true
+	for !validUsername(firstRun) {
 		fmt.Print("Enter Twitter username: ")
 		fmt.Scanln(&twitterAccount)
+		firstRun = false
 	}
 
 	waybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=https://twitter.com/%s&matchType=prefix", twitterAccount)
@@ -81,15 +83,19 @@ func main() {
 	createReport(saveLocation)
 }
 
-func validUsername() bool {
+func validUsername(firstRun bool) bool {
+	if firstRun {
+		return false
+	}
+
 	if twitterAccount == "" {
 		fmt.Println(`"" - is not a valid username`)
 		return false
 	}
 
-	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+{1,15}$`).MatchString(twitterAccount)
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_]{1,15}$`).MatchString(twitterAccount)
 	if !valid {
-		fmt.Println("Username can only contain alphanumeric characters and underscores")
+		fmt.Println("Username can only contain alphanumeric characters and underscores (1-15 characters)")
 		return false
 	}
 
