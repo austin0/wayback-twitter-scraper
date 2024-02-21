@@ -197,7 +197,7 @@ func fetchWaybackPages(waybackResultsURL string) {
 
 func parseImages(saveLocation string) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 20) // Limit to 5 concurrent goroutines
+	sem := make(chan struct{}, 20) // Limit to 20 concurrent goroutines
 
 	for pageLink := range pageCache {
 		wg.Add(1)
@@ -240,24 +240,26 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		resp, err := proxyClient.Get(combinedURL)
 		if err != nil {
 			color.Red.Println("Error fetching page content:", err)
+			time.Sleep(2 * time.Second) // Wait before retrying
+			continue
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
+			time.Sleep(2 * time.Second) // Wait before retrying
+			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			color.Red.Println("Error reading page content:", err)
+			time.Sleep(2 * time.Second) // Wait before retrying
+			continue
 		}
 
-		if err == nil {
-			htmlContent := string(body)
-			return htmlContent, nil
-		}
-
-		time.Sleep(1 * time.Second) // Wait before retrying
+		htmlContent := string(body)
+		return htmlContent, nil
 	}
 	return "", fmt.Errorf("error downloading image after %d retries: %s", retry, combinedURL)
 }
@@ -416,7 +418,6 @@ func createReport(saveLocation string) {
 
 func getProxyClient() *http.Client {
 	randomProxy := proxies[rand.Intn(len(proxies))]
-	color.LightBlue.Printf(`Selected Proxy - %s`, randomProxy)
 	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", randomProxy.Username, randomProxy.Password, randomProxy.IP, randomProxy.Port)
 
 	proxyURL, err := url.Parse(proxyString)
