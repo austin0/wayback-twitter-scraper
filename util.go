@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/common-nighthawk/go-figure"
@@ -25,6 +26,11 @@ func GetPWD() string {
 }
 
 func InvalidUsernameCheck() bool {
+	// if TwitterUsername contains the twitter URL remove it
+	if strings.Contains(TwitterUsername, "twitter.com/") {
+		TwitterUsername = strings.Split(TwitterUsername, ".com/")[1]
+	}
+
 	if TwitterUsername == "" {
 		fmt.Println(`"" - is not a valid username`)
 		return true
