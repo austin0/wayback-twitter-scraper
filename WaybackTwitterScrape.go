@@ -13,15 +13,16 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/corona10/goimghdr"
 	"github.com/gookit/color"
 )
 
 var (
-	pageCache         = make(map[string]bool)
-	mediaCache        = make(map[string]bool)
-	profileCache      = make(map[string]bool)
+	pageCache         = make(map[string]int)
+	mediaCache        = make(map[string]int)
+	profileCache      = make(map[string]int)
 	waybackResultsURL string
 	saveLocation      string
 	twitterAccount    string
@@ -29,7 +30,7 @@ var (
 	mediaRegex        = regexp.MustCompile(`https://pbs.twimg.com/media/[A-Za-z0-9_.\-]+.jpg`)
 	profileRegex      = regexp.MustCompile(`https://pbs.twimg.com/profile_images/[0-9]+/[A-Za-z0-9_.\-]+.jpg`)
 	filenameRegex     = regexp.MustCompile(`[A-Za-z0-9_.]+.jpg`)
-	homeDirectory     = "C:/Users/austi/Desktop/wayback"
+	homeDirectory     string
 	proxies           []Proxy
 	mediaCacheMutex   sync.Mutex
 	profileCacheMutex sync.Mutex
@@ -43,15 +44,19 @@ type Proxy struct {
 }
 
 func main() {
+	getPWD()
+
 	fmt.Printf("\nLoading proxies: %s/proxies/proxies.txt\n", homeDirectory)
 	loadProxies(homeDirectory, &proxies)
 	fmt.Printf("\nLoaded %d proxies from file\n", len(proxies))
 
-	fmt.Print("Enter Twitter username: ")
-	fmt.Scanln(&twitterAccount)
+	for !validUsername() {
+		fmt.Print("Enter Twitter username: ")
+		fmt.Scanln(&twitterAccount)
+	}
 
 	waybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=https://twitter.com/%s&matchType=prefix", twitterAccount)
-	saveLocation = fmt.Sprintf("%s/%s/images", homeDirectory, twitterAccount)
+	saveLocation = fmt.Sprintf("%s/images/%s", homeDirectory, twitterAccount)
 
 	if _, err := os.Stat(saveLocation); os.IsNotExist(err) {
 		os.MkdirAll(saveLocation, os.ModePerm)
@@ -59,7 +64,7 @@ func main() {
 
 	fmt.Printf("Fetching list of WaybackMachine cached pages for profile: %s\n", twitterAccount)
 	fetchWaybackPages(waybackResultsURL)
-	fmt.Printf("Found %d cached pages\n", len(pageCache))
+	color.Yellow.Printf("Found %d cached pages\n", len(pageCache))
 
 	fmt.Println("Visiting the cached pages and checking for images")
 	parseImages(saveLocation)
@@ -70,6 +75,31 @@ func main() {
 
 	fmt.Printf("Report created: %s/report.txt\n", saveLocation)
 	createReport(saveLocation)
+}
+
+func validUsername() bool {
+	if twitterAccount == "" {
+		fmt.Println(`"" - is not a valid username`)
+		return false
+	}
+
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_]+{1,15}$`).MatchString(twitterAccount)
+	if !valid {
+		fmt.Println("Username can only contain alphanumeric characters and underscores")
+		return false
+	}
+
+	return true
+}
+
+func getPWD() {
+	pwd, err := os.Getwd()
+	if err != nil {
+		color.Red.Println("Error getting PWD:", err)
+		return
+	}
+
+	homeDirectory = pwd
 }
 
 func loadProxies(homeDirectory string, proxies *[]Proxy) {
@@ -118,58 +148,58 @@ func fetchWaybackPages(waybackResultsURL string) {
 	for _, result := range waybackResults {
 		pageLink, _ := result[2].(string)
 		if strings.Contains(pageLink, `http`) {
-			pageCache[pageLink] = true
+			pageCache[pageLink] = (len(pageCache) + 1)
 		}
 	}
 }
 
 func parseImages(saveLocation string) {
-	semaphore := make(chan struct{}, 10) // Limit to 10 concurrent goroutines
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5) // Limit to 5 concurrent goroutines
 
 	for pageLink := range pageCache {
-		combinedURL := waybackPrefix + pageLink
+		wg.Add(1)
 
-		fmt.Printf("Visiting %s to parse images\n", pageLink)
+		go func(pageLink string) {
+			defer wg.Done()
 
-		resp, err := http.Get(combinedURL)
-		if err != nil {
-			color.Red.Println("Error fetching page content:", err)
-			continue
-		}
-		defer resp.Body.Close()
+			sem <- struct{}{}        // Acquire semaphore
+			defer func() { <-sem }() // Release semaphore
 
-		if resp.StatusCode != http.StatusOK {
-			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
-			continue
-		}
+			combinedURL := waybackPrefix + pageLink
+			fmt.Printf("[%d / %d] - Visiting %s to parse images\n", pageCache[pageLink], len(pageCache), pageLink)
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			color.Red.Println("Error reading page content:", err)
-			continue
-		}
+			resp, err := http.Get(combinedURL)
+			if err != nil {
+				color.Red.Println("Error fetching page content:", err)
+				return
+			}
+			defer resp.Body.Close()
 
-		htmlContent := string(body)
-
-		mediaURLs := mediaRegex.FindAllString(htmlContent, -1)
-		profileURLs := profileRegex.FindAllString(htmlContent, -1)
-		imageURLs := append(mediaURLs, profileURLs...)
-
-		for _, imageURL := range imageURLs {
-			if isCached(imageURL) {
-				continue
+			if resp.StatusCode != http.StatusOK {
+				color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
+				return
 			}
 
-			semaphore <- struct{}{} // Acquire semaphore
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				color.Red.Println("Error reading page content:", err)
+				return
+			}
 
-			wg.Add(1)
-			go func(imageURL string) {
-				defer wg.Done()
-				defer func() { <-semaphore }() // Release semaphore
-				downloadImage(imageURL, saveLocation)
-			}(imageURL)
-		}
+			htmlContent := string(body)
+
+			mediaURLs := mediaRegex.FindAllString(htmlContent, -1)
+			profileURLs := profileRegex.FindAllString(htmlContent, -1)
+			imageURLs := append(mediaURLs, profileURLs...)
+
+			for _, imageURL := range imageURLs {
+				if isCached(imageURL) {
+					continue
+				}
+				downloadImageWithRetry(imageURL, saveLocation)
+			}
+		}(pageLink)
 	}
 
 	wg.Wait()
@@ -193,36 +223,48 @@ func isCached(imageURL string) bool {
 	return false
 }
 
-func downloadImage(imageLink, saveLocation string) {
+func downloadImageWithRetry(imageLink, saveLocation string) {
+	retry := 3
+	for i := 0; i < retry; i++ {
+		err := downloadImage(imageLink, saveLocation)
+		if err == nil {
+			return
+		}
+		time.Sleep(1 * time.Second) // Wait before retrying
+	}
+	color.Red.Printf("Error downloading image after %d retries: %s\n", retry, imageLink)
+}
+
+func downloadImage(imageLink, saveLocation string) error {
 	imageType := ""
+	var imageCache *map[string]int
 
 	if strings.Contains(imageLink, "media") {
 		mediaCacheMutex.Lock()
 		defer mediaCacheMutex.Unlock()
-		mediaCache[imageLink] = true
+		mediaCache[imageLink] = len(mediaCache) + 1
 		imageType = "media"
+		imageCache = &mediaCache
 	} else {
 		profileCacheMutex.Lock()
 		defer profileCacheMutex.Unlock()
-		profileCache[imageLink] = true
+		profileCache[imageLink] = len(profileCache) + 1
 		imageType = "profile"
+		imageCache = &profileCache
 	}
-
-	color.Green.Printf("Parsed %s image: %s\n", imageType, imageLink)
 
 	imageName := filenameRegex.FindString(imageLink)
 	combinedURL := waybackPrefix + imageLink
 	localPath := fmt.Sprintf("%s/%s", saveLocation, imageName)
 
-	fmt.Printf("Fetching %s image %s, storing at %s\n", imageType, imageLink, localPath)
+	color.Yellow.Printf("[%d / %d] - Fetching %s image %s\n", (*imageCache)[imageLink], len(*imageCache), imageType, imageLink)
 
 	randomProxy := proxies[rand.Intn(len(proxies))]
 	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", randomProxy.Username, randomProxy.Password, randomProxy.IP, randomProxy.Port)
 
 	proxyURL, err := url.Parse(proxyString)
 	if err != nil {
-		color.Red.Println("Error parsing proxy URL:", err)
-		return
+		return fmt.Errorf("error parsing proxy URL: %s", err)
 	}
 
 	proxyClient := &http.Client{
@@ -233,42 +275,41 @@ func downloadImage(imageLink, saveLocation string) {
 
 	resp, err := proxyClient.Get(combinedURL)
 	if err != nil {
-		color.Red.Printf("Error fetching image: %s\n", err)
-		return
+		return fmt.Errorf("error fetching image: %s", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return
+		return nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		color.Red.Printf("Error fetching image: HTTP status %d\n", resp.StatusCode)
-		return
+		return fmt.Errorf("error fetching image: HTTP status %d", resp.StatusCode)
 	}
 
 	file, err := os.Create(localPath)
 	if err != nil {
-		color.Red.Printf("Error creating file: %s\n", err)
-		return
+		return fmt.Errorf("error creating file: %s", err)
 	}
 	defer file.Close()
 
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
-		color.Red.Printf("Error saving image: %s\n", err)
-		return
+		return fmt.Errorf("error saving image: %s", err)
 	}
 
 	color.Green.Printf("Saved %s - %s\n", imageType, localPath)
+	return nil
 }
 
 func purgeCorrupted(twitterAccount string) {
-	images, err := filepath.Glob(fmt.Sprintf("%s/%s/images/*.jpg", homeDirectory, twitterAccount))
+	images, err := filepath.Glob(fmt.Sprintf("%s/images/%s/*.jpg", homeDirectory, twitterAccount))
 	if err != nil {
 		color.Red.Println("Error listing image files:", err)
 		return
 	}
+
+	purgedCounter := 0
 
 	for _, image := range images {
 		if _, err := os.Stat(image); err != nil {
@@ -283,9 +324,12 @@ func purgeCorrupted(twitterAccount string) {
 					continue
 				}
 				color.Green.Printf("Removed corrupted image: %s\n", image)
+				purgedCounter += 1
 			}
 		}
 	}
+
+	color.Green.Println(`No corrupted images found - success!`)
 }
 
 func createReport(saveLocation string) {
