@@ -34,6 +34,8 @@ var (
 	proxies           []Proxy
 	mediaCacheMutex   sync.Mutex
 	profileCacheMutex sync.Mutex
+	storedImagesMutex sync.Mutex
+	storedImages      = make(map[string]bool)
 )
 
 type Proxy struct {
@@ -61,6 +63,8 @@ func main() {
 	if _, err := os.Stat(saveLocation); os.IsNotExist(err) {
 		os.MkdirAll(saveLocation, os.ModePerm)
 	}
+
+	initStoredImages()
 
 	fmt.Printf("Fetching list of WaybackMachine cached pages for profile: %s\n", twitterAccount)
 	fetchWaybackPages(waybackResultsURL)
@@ -129,6 +133,33 @@ func loadProxies(homeDirectory string, proxies *[]Proxy) {
 	if err := scanner.Err(); err != nil {
 		color.Red.Println("Error reading proxy file:", err)
 	}
+}
+
+func initStoredImages() {
+	mediaDir := fmt.Sprintf(`%s/images/%s/media`, homeDirectory, twitterAccount)
+	profileDir := fmt.Sprintf(`%s/images/%s/profile`, homeDirectory, twitterAccount)
+
+	addImagesFromDirectory(mediaDir)
+	addImagesFromDirectory(profileDir)
+}
+
+func addImagesFromDirectory(directoryPath string) {
+	paths, err := filepath.Glob(directoryPath)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	for _, path := range paths {
+		storedImagesMutex.Lock()
+		storedImages[path] = true
+		storedImagesMutex.Unlock()
+	}
+}
+
+func imageAlreadyExists(imageURL string) bool {
+	storedImagesMutex.Lock()
+	defer storedImagesMutex.Unlock()
+	return storedImages[imageURL]
 }
 
 func fetchWaybackPages(waybackResultsURL string) {
@@ -255,9 +286,14 @@ func downloadImage(imageLink, saveLocation string) error {
 
 	imageName := filenameRegex.FindString(imageLink)
 	combinedURL := waybackPrefix + imageLink
-	localPath := fmt.Sprintf("%s/%s", saveLocation, imageName)
+	localPath := fmt.Sprintf("%s/%s/%s", saveLocation, imageType, imageName)
 
 	color.Yellow.Printf("[%d / %d] - Fetching %s image %s\n", (*imageCache)[imageLink], len(*imageCache), imageType, imageLink)
+
+	if imageAlreadyExists(imageName) {
+		color.Green.Printf("[%d / %d] - Image %s found in cache\n", (*imageCache)[imageLink], len(*imageCache), imageLink)
+		return nil
+	}
 
 	randomProxy := proxies[rand.Intn(len(proxies))]
 	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", randomProxy.Username, randomProxy.Password, randomProxy.IP, randomProxy.Port)
