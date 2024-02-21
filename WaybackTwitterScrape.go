@@ -89,10 +89,10 @@ func main() {
 	downloadImage()
 	color.Green.Printf("Saved %d images for username: %s\n", totalDownloads, twitterUsername)
 
-	fmt.Printf("Purging any corrupted images in %s\n", usernameLocation)
+	color.Gray.Printf("Purging any corrupted images in %s\n", usernameLocation)
 	purgeCorrupted(twitterUsername)
 
-	fmt.Printf("Report created: %s/%s-report.txt\n", usernameLocation, getCurrentDate())
+	color.Magenta.Printf("Report created: %s/%s-report.txt\n", usernameLocation, getCurrentDate())
 	createReport(usernameLocation)
 }
 
@@ -230,7 +230,11 @@ func parseImages() {
 			fmt.Printf("%s - Visiting %s to parse images\n", getProgress(), pageURL)
 
 			htmlContent, err := parseImagesWithRetry(combinedURL)
-			if err != nil {
+			switch err {
+			case nil:
+				pageProcessed = append(pageProcessed, pageURL)
+				color.Green.Printf("%s - Successfull parsed %s\n", getProgress(), pageURL)
+			default:
 				fmt.Printf("Error parsing images from %s - %s", combinedURL, err)
 				pageUnprocessed = append(pageUnprocessed, pageURL)
 				return
@@ -246,18 +250,22 @@ func parseImages() {
 }
 
 func parseImagesWithRetry(combinedURL string) (string, error) {
+	var errCatcher error
 	retry := 5
 	for i := 0; i < retry; i++ {
 		resp, err := getProxyClient().Get(combinedURL)
 		if err != nil {
 			color.Red.Println("Error fetching page content:", err)
+			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
+			errCatcher = err
 			continue
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
+			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
 			continue
 		}
@@ -265,6 +273,7 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			color.Red.Printf("Error reading response body content for %s: %s", combinedURL, err)
+			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
 			continue
 		}
@@ -272,7 +281,7 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		htmlContent := string(body)
 		return htmlContent, nil
 	}
-	return "", fmt.Errorf("error parsing page content after %d retries: %s\n", retry, combinedURL)
+	return "", errCatcher
 }
 
 func downloadImageWithRetry(imageURL string, downloadPath string) error {
@@ -291,7 +300,7 @@ func downloadImageWithRetry(imageURL string, downloadPath string) error {
 		defer resp.Body.Close()
 
 		if resp.StatusCode == 404 {
-			return fmt.Errorf("resource missing")
+			return fmt.Errorf("404 Resource Missing")
 		}
 
 		if resp.StatusCode != http.StatusOK {
@@ -357,7 +366,7 @@ func downloadImage() error {
 				totalDownloads += 1
 				imageProcessed = append(imageProcessed, imageURL)
 				color.Green.Printf("%s - Saved %s\n", getProgress(), imageURL)
-			case errors.New("resource missing"):
+			case errors.New("404 Resource Missing"):
 				color.Red.Printf("404 Resource Missing - %s - Aborting thread\n", imageURL)
 			default:
 				color.Red.Printf("Error downloading image from %s - %s\n", combinedURL, err)
@@ -484,11 +493,14 @@ func truncateString(s string, n int) string {
 
 func slicesRemoveDuplicates(linkArray []string) []string {
 	uniqueLinks := make(map[string]bool)
+	var uniqueLinksSlice []string
+
+	mapMutex.Lock()
+	defer mapMutex.Unlock()
+
 	for _, link := range linkArray {
 		uniqueLinks[link] = true
 	}
-
-	var uniqueLinksSlice []string
 	for link := range uniqueLinks {
 		uniqueLinksSlice = append(uniqueLinksSlice, link)
 	}
