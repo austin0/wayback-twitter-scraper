@@ -81,18 +81,18 @@ func main() {
 
 	color.LightGreen.Printf("\n=== Visiting the cached pages and checking for images\n")
 	parseImages()
-	color.Green.Printf("Found %d cached images for: %s\n", len(imageUnprocessed), twitterUsername)
+	color.Green.Printf("\nFound %d cached images for: %s\n", len(imageUnprocessed), twitterUsername)
 
 	imageUnprocessed = removeAlreadySavedImages(imageUnprocessed, localImageCache) // Remove previously downloaded images from the unprocessedImages list
 
-	color.LightGreen.Println("Downloading indentified images from Wayback Machine Cache")
+	color.LightGreen.Println("Downloading indentified images from Wayback Machine Cache\n")
 	downloadImage()
-	color.Green.Printf("Saved %d images for username: %s\n", totalDownloads, twitterUsername)
+	color.Green.Printf("\nSaved %d images for username: %s\n", totalDownloads, twitterUsername)
 
-	color.Gray.Printf("Purging any corrupted images in %s\n", usernameLocation)
+	color.Gray.Printf("\nPurging any corrupted images in %s\n", usernameLocation)
 	purgeCorrupted(twitterUsername)
 
-	color.Magenta.Printf("Report created: %s/%s-report.txt\n", usernameLocation, getCurrentDate())
+	color.Magenta.Printf("\nReport created: %s/%s-report.txt\n", usernameLocation, getCurrentDate())
 	createReport(usernameLocation)
 }
 
@@ -227,13 +227,13 @@ func parseImages() {
 			defer func() { <-sem }() // Release semaphore
 
 			combinedURL := waybackPrefix + pageURL
-			fmt.Printf("%s - Visiting %s to parse images\n", getProgress(), pageURL)
+			fmt.Printf("%s - Visiting %s to parse images\n", getPageProgress(), pageURL)
 
 			htmlContent, err := parseImagesWithRetry(combinedURL)
 			switch err {
 			case nil:
 				pageProcessed = append(pageProcessed, pageURL)
-				color.Green.Printf("%s - Successfull parsed %s\n", getProgress(), pageURL)
+				color.Green.Printf("%s - Successfully parsed %s\n", getPageProgress(), pageURL)
 			default:
 				fmt.Printf("Error parsing images from %s - %s", combinedURL, err)
 				pageUnprocessed = append(pageUnprocessed, pageURL)
@@ -358,14 +358,14 @@ func downloadImage() error {
 			combinedURL := waybackPrefix + imageURL
 			downloadPath := fmt.Sprintf("%s/%s/%s", usernameLocation, imageType, imageName)
 
-			color.Yellow.Printf("%s - Fetching %s image %s\n", getProgress(), imageType, imageURL)
+			color.Yellow.Printf("%s - Fetching %s image %s\n", getImageProgress(), imageType, imageURL)
 
 			err := downloadImageWithRetry(combinedURL, downloadPath)
 			switch err {
 			case nil:
 				totalDownloads += 1
 				imageProcessed = append(imageProcessed, imageURL)
-				color.Green.Printf("%s - Saved %s\n", getProgress(), imageURL)
+				color.Green.Printf("%s - Saved %s\n", getImageProgress(), imageURL)
 			case errors.New("404 Resource Missing"):
 				color.Red.Printf("404 Resource Missing - %s - Aborting thread\n", imageURL)
 			default:
@@ -468,8 +468,12 @@ func addSizeSpread(profileURLs []string) []string {
 	return profileURLs
 }
 
-func getProgress() string {
-	return fmt.Sprintf("[%d / %d]", (len(pageProcessed) + len(imageProcessed)), (len(pageUnprocessed) + len(imageUnprocessed) + len(pageProcessed) + len(imageProcessed)))
+func getPageProgress() string {
+	return fmt.Sprintf("[%d / %d]", len(pageProcessed), (len(pageUnprocessed) + len(pageProcessed)))
+}
+
+func getImageProgress() string {
+	return fmt.Sprintf("[%d / %d]", len(imageProcessed), (len(imageUnprocessed) + len(imageProcessed)))
 }
 
 func pop(slice []string) ([]string, string) {
