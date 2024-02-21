@@ -200,7 +200,9 @@ func parseImages(saveLocation string) {
 			combinedURL := waybackPrefix + pageLink
 			fmt.Printf("[%d / %d] - Visiting %s to parse images\n", pageCache[pageLink], len(pageCache), pageLink)
 
-			resp, err := http.Get(combinedURL)
+			proxyClient := getProxyClient()
+
+			resp, err := proxyClient.Get(combinedURL)
 			if err != nil {
 				color.Red.Println("Error fetching page content:", err)
 				return
@@ -295,19 +297,7 @@ func downloadImage(imageLink, saveLocation string) error {
 		return nil
 	}
 
-	randomProxy := proxies[rand.Intn(len(proxies))]
-	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", randomProxy.Username, randomProxy.Password, randomProxy.IP, randomProxy.Port)
-
-	proxyURL, err := url.Parse(proxyString)
-	if err != nil {
-		return fmt.Errorf("error parsing proxy URL: %s", err)
-	}
-
-	proxyClient := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
+	proxyClient := getProxyClient()
 
 	resp, err := proxyClient.Get(combinedURL)
 	if err != nil {
@@ -398,4 +388,23 @@ func createReport(saveLocation string) {
 		color.Red.Println("Error writing to report file:", err)
 		return
 	}
+}
+
+func getProxyClient() *http.Client {
+	randomProxy := proxies[rand.Intn(len(proxies))]
+	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", randomProxy.Username, randomProxy.Password, randomProxy.IP, randomProxy.Port)
+
+	proxyURL, err := url.Parse(proxyString)
+	if err != nil {
+		color.Red.Sprintf(`Error: Unable to parse proxy - %s`, proxyString)
+		return nil
+	}
+
+	proxyClient := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+
+	return proxyClient
 }
