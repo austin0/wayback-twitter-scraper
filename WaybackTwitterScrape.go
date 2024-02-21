@@ -221,7 +221,6 @@ func parseImages(saveLocation string) {
 			imageURLs := append(mediaURLs, profileURLs...)
 
 			for _, imageURL := range imageURLs {
-				fmt.Println(imageURL)
 				if isCached(imageURL) {
 					continue
 				}
