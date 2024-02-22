@@ -20,6 +20,12 @@ type Proxy struct {
 	Password string
 }
 
+var transportOptions = tls_client.TransportOptions{
+	MaxIdleConnsPerHost: -1,
+	DisableKeepAlives:   true,
+	MaxConnsPerHost:     0,
+}
+
 // GetProxyClient() returns a new HTTP client with a random proxy from the list
 func GetProxyClient() tls_client.HttpClient {
 
@@ -27,6 +33,7 @@ func GetProxyClient() tls_client.HttpClient {
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Chrome_120),
 		tls_client.WithProxyUrl(getProxy()),
+		tls_client.WithTransportOptions(&transportOptions),
 	}
 
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)

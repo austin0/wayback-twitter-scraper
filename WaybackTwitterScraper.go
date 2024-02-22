@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,7 +46,6 @@ func fetchWaybackPages() {
 	var waybackResults [][]interface{}
 	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
 	httpClient := GetProxyClient()
-	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
 	if err != nil {
 		log.Println(err)
@@ -57,6 +57,7 @@ func fetchWaybackPages() {
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t", err)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 		defer resp.Body.Close()
@@ -69,10 +70,8 @@ func fetchWaybackPages() {
 	}
 
 	for _, result := range waybackResults {
-		pageURL, _ := result[2].(string)
+		pageURL := result[2].(string)
 		if strings.Contains(pageURL, `http`) {
-			// strip https:// or http:// from the URL - bypasses some issues with the Wayback Machine API
-			pageURL = strings.Split(pageURL, "//")[1]
 			PageUnprocessed = append(PageUnprocessed, pageURL)
 		}
 	}
@@ -115,7 +114,7 @@ func parseImages() {
 				color.FgDarkGray.Printf("Skipping %s - not a valid page\n", pageURL)
 				return
 			default:
-				fmt.Printf("Error parsing images from %s - %s", combinedURL, err)
+				fmt.Printf("Error parsing images from %s - %s\n", combinedURL, err)
 				PageUnprocessed = append(PageUnprocessed, pageURL)
 				return
 			}
@@ -130,7 +129,6 @@ func parseImages() {
 				}
 				ImageUnprocessed = RemoveDuplicates(append(ImageUnprocessed, resourceURLs...))
 			}
-
 		}(pageURL)
 	}
 	wg.Wait()
@@ -141,7 +139,6 @@ func parseImages() {
 func parseImagesWithRetry(combinedURL string) (string, error) {
 	retry := 5
 	httpClient := GetProxyClient()
-	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
 	if err != nil {
 		return "TLS Client", err
@@ -150,7 +147,8 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 	for i := 0; i < retry; i++ {
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			color.Red.Println("Error fetching page content:", err)
+			color.Red.Printf("Error fetching page content: %s", err.Error())
+			httpClient.CloseIdleConnections()
 			rotateClientProxy(httpClient)
 			continue
 		}
@@ -164,13 +162,15 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			color.Red.Printf("Error reading response body content for %s: %s", combinedURL, err)
+			color.Red.Printf("Error reading response body content for %s: %s\n", combinedURL, err)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 
@@ -182,9 +182,7 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 
 func downloadImageWithRetry(imageURL string, downloadPath string) string {
 	retry := 5
-
 	httpClient := GetProxyClient()
-	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
 	if err != nil {
 		log.Println(err)
@@ -195,10 +193,19 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 
 		defer resp.Body.Close()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			color.Red.Printf("Retrying - Error reading image: %s\n", err)
+			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
+			continue
+		}
 
 		if resp.StatusCode == 404 && resp.Header.Get("Content-Type") == "text/html" {
 			return "404 - Not an image resource"
@@ -207,21 +214,24 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Retrying - Error fetching image: HTTP status %d\n", resp.StatusCode)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 
 		file, err := os.Create(downloadPath)
 		if err != nil {
-			color.Red.Printf("Retrying - Error creating file: %s | %s\n", err, imageURL)
+			color.Red.Printf("Retrying - Error creating file: %s\n", err)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 		defer file.Close()
 
-		_, err = io.Copy(file, resp.Body)
+		_, err = io.Copy(file, bytes.NewReader(bodyBytes))
 		if err != nil {
 			color.Red.Printf("Retrying - Error saving image: %s\n", err)
 			rotateClientProxy(httpClient)
+			httpClient.CloseIdleConnections()
 			continue
 		}
 		return "Success"
@@ -252,17 +262,12 @@ func downloadImages() {
 		go func(imageURL string, imageType string) {
 			defer wg.Done()
 
-			// trim https:// or http:// from the URL - bypasses some issues with the Wayback Machine API
-			imageURL = strings.Split(imageURL, "//")[1]
-
 			sem <- struct{}{}        // Acquire semaphore
 			defer func() { <-sem }() // Release semaphore
 
 			imageName := FilenameRegex.FindString(imageURL)
 			combinedURL := WaybackPrefix + imageURL
 			downloadPath := fmt.Sprintf("%s/%s/%s", UsernameLocation, imageType, imageName)
-
-			//color.Yellow.Printf("%s - Fetching %s image %s\n", GetImageProgress(), imageType, imageURL)
 
 			resultString := downloadImageWithRetry(combinedURL, downloadPath)
 			switch resultString {
