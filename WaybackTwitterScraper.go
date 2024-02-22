@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 	"github.com/corona10/goimghdr"
@@ -17,27 +16,17 @@ import (
 )
 
 func main() {
-	DrawTitle() // Draw the title of the program
-
-	inputUsername() // Prompt user for Twitter username
-
-	CreateDirectories() // Create necessary directories for storing images
-
-	LoadProxies(HomeDirectory, &Proxies) // Load proxies from the proxies.txt file
-
+	DrawTitle()            // Draw the title of the program
+	inputUsername()        // Prompt user for Twitter username
+	CreateDirectories()    // Create necessary directories for storing images
+	LoadProxies()          // Load proxies from the proxies.txt file
 	CreateStoredImageMap() // Create an in-memory map of stored images
-
-	fetchWaybackPages() // Fetch Wayback Machine cached pages
-
-	parseImages() // Parse images from the cached pages
-
-	RemoveCommonItems(ImageUnprocessed, StoredImageMap) // Remove previously downloaded images from the unprocessedImages list
-
-	downloadImages() // Download images from the Wayback Machine cache
-
-	purgeCorrupted(TwitterUsername) // Purge any corrupted images
-
-	createReport(UsernameLocation) // Create a report of the downloaded images
+	fetchWaybackPages()    // Fetch Wayback Machine cached pages
+	parseImages()          // Parse images from the cached pages
+	RemoveCommonItems()    // Remove previously downloaded images from the unprocessedImages list
+	downloadImages()       // Download images from the Wayback Machine cache
+	purgeCorrupted()       // Purge any corrupted images
+	createReport()         // Create a report of the downloaded images
 }
 
 func inputUsername() {
@@ -56,6 +45,7 @@ func fetchWaybackPages() {
 	var waybackResults [][]interface{}
 	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
 	httpClient := GetProxyClient()
+	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
 	if err != nil {
 		log.Println(err)
@@ -66,21 +56,13 @@ func fetchWaybackPages() {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t", err)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 		defer resp.Body.Close()
 		if err := json.NewDecoder(resp.Body).Decode(&waybackResults); err != nil {
 			color.Red.Println("Error decoding Wayback Machine results:", err)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 		break
@@ -129,16 +111,26 @@ func parseImages() {
 			case nil:
 				PageProcessed = append(PageProcessed, pageURL)
 				color.Green.Printf("%s - Successfully parsed %s\n", GetPageProgress(), pageURL)
+			case http.ErrNotSupported:
+				color.FgDarkGray.Printf("Skipping %s - not a valid page\n", pageURL)
+				return
 			default:
 				fmt.Printf("Error parsing images from %s - %s", combinedURL, err)
 				PageUnprocessed = append(PageUnprocessed, pageURL)
 				return
 			}
 
-			mediaURLs := MediaRegex.FindAllString(htmlContent, -1)
-			profileURLs := addSizeSpread(ProfileRegex.FindAllString(htmlContent, -1))
-			imageURLs := append(mediaURLs, profileURLs...)
-			ImageUnprocessed = RemoveDuplicates(append(ImageUnprocessed, imageURLs...))
+			for _, resource := range Resources {
+				var resourceURLs []string
+				switch resource {
+				case "media":
+					resourceURLs = MediaRegex.FindAllString(htmlContent, -1)
+				case "profile":
+					resourceURLs = addSizeSpread(ProfileRegex.FindAllString(htmlContent, -1))
+				}
+				ImageUnprocessed = RemoveDuplicates(append(ImageUnprocessed, resourceURLs...))
+			}
+
 		}(pageURL)
 	}
 	wg.Wait()
@@ -147,9 +139,9 @@ func parseImages() {
 }
 
 func parseImagesWithRetry(combinedURL string) (string, error) {
-	var errCatcher error
 	retry := 5
 	httpClient := GetProxyClient()
+	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
 	if err != nil {
 		return "TLS Client", err
@@ -159,52 +151,40 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Println("Error fetching page content:", err)
-			errCatcher = err
-			time.Sleep(2 * time.Second) // Wait before retrying
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error", err
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 
 		defer resp.Body.Close()
 
+		if resp.StatusCode == 404 {
+			return "404 - Not a valid page", http.ErrNotSupported
+		}
+
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
-			time.Sleep(2 * time.Second) // Wait before retrying
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error", err
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			color.Red.Printf("Error reading response body content for %s: %s", combinedURL, err)
-			errCatcher = err
-			time.Sleep(2 * time.Second) // Wait before retrying
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error", err
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 
 		htmlContent := string(body)
 		return htmlContent, nil
 	}
-	return "", errCatcher
+	return "", fmt.Errorf("error fetching page content after %d retries", retry)
 }
 
 func downloadImageWithRetry(imageURL string, downloadPath string) string {
 	retry := 5
 
 	httpClient := GetProxyClient()
+	defer httpClient.CloseIdleConnections()
 	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
 	if err != nil {
 		log.Println(err)
@@ -214,12 +194,7 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
-			time.Sleep(2 * time.Second)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error"
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 
@@ -231,24 +206,14 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Retrying - Error fetching image: HTTP status %d\n", resp.StatusCode)
-			time.Sleep(2 * time.Second)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error"
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 
 		file, err := os.Create(downloadPath)
 		if err != nil {
-			color.Red.Printf("Retrying - Error creating file: %s\n", err)
-			time.Sleep(2 * time.Second)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error"
-			}
+			color.Red.Printf("Retrying - Error creating file: %s | %s\n", err, imageURL)
+			rotateClientProxy(httpClient)
 			continue
 		}
 		defer file.Close()
@@ -256,12 +221,7 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		_, err = io.Copy(file, resp.Body)
 		if err != nil {
 			color.Red.Printf("Retrying - Error saving image: %s\n", err)
-			time.Sleep(2 * time.Second)
-			err = httpClient.SetProxy(getProxy())
-			if err != nil {
-				log.Println(err)
-				return "SetProxy Error"
-			}
+			rotateClientProxy(httpClient)
 			continue
 		}
 		return "Success"
@@ -326,7 +286,7 @@ func downloadImages() {
 	color.Green.Printf("\nSaved %d images for username: %s\n", TotalDownloads, TwitterUsername)
 }
 
-func purgeCorrupted(TwitterUsername string) {
+func purgeCorrupted() {
 	color.Gray.Printf("\nPurging any corrupted images in %s\n", UsernameLocation)
 
 	images, err := filepath.Glob(fmt.Sprintf("%s/images/%s/*.jpg", HomeDirectory, TwitterUsername))
@@ -358,7 +318,7 @@ func purgeCorrupted(TwitterUsername string) {
 	color.Green.Println(`No corrupted images found - success!`)
 }
 
-func createReport(UsernameLocation string) {
+func createReport() {
 	header := fmt.Sprintf(`=== Wayback Report - %s - %s`, TwitterUsername, GetCurrentDate())
 	totalProcessed := fmt.Sprintf("Pages Parsed: %d | Images Proccesed: %d | Downloaded Images: %d", len(PageProcessed), len(ImageProcessed), TotalDownloads)
 	pageString := ""

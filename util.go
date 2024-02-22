@@ -103,16 +103,16 @@ func RemoveDuplicates(inputSlice []string) []string {
 }
 
 // Removes the objects stored in StoredImageMap from the unprocessedImageSlice
-func RemoveCommonItems(parsedImages []string, storedImages map[string]bool) {
+func RemoveCommonItems() {
 	tempSlice := []string{}
 
-	for _, item := range parsedImages {
+	for _, item := range ImageUnprocessed {
 		// regex item for just filename
 		itemFilename := FilenameRegex.FindString(item)
-		if !storedImages[itemFilename] {
+		if !StoredImageMap[itemFilename] {
 			tempSlice = append(tempSlice, item)
 		}
 	}
-	color.Magenta.Printf("Filtered %d previously downloaded images - %s\n", len(parsedImages)-len(tempSlice), UsernameLocation)
+	color.Magenta.Printf("Filtered %d previously downloaded images - %s\n", len(ImageUnprocessed)-len(tempSlice), UsernameLocation)
 	ImageUnprocessed = tempSlice
 }

@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	Resources         = []string{"media", "profile"}
 	Proxies           []Proxy
 	PageUnprocessed   []string
 	PageProcessed     []string
@@ -23,7 +24,7 @@ var (
 	WaybackPrefix     = "https://web.archive.org/web/20200126021126if_/"
 	MediaRegex        = regexp.MustCompile(`https://pbs.twimg.com/media/[A-Za-z0-9_.\-]+.jpg`)
 	ProfileRegex      = regexp.MustCompile(`https://pbs.twimg.com/profile_images/[0-9]+/[A-Za-z0-9_.\-]+.jpg`)
-	FilenameRegex     = regexp.MustCompile(`[A-Za-z0-9_.]+.jpg`)
+	FilenameRegex     = regexp.MustCompile(`[A-Za-z0-9_.\-]+.jpg`)
 	MaxThreads        = 300
 	RequestHeaders    = http.Header{
 		"authority":                 {"web.archive.org"},

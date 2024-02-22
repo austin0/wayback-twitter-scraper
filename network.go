@@ -43,7 +43,15 @@ func getProxy() string {
 	return proxyString
 }
 
-func LoadProxies(HomeDirectory string, Proxies *[]Proxy) {
+func rotateClientProxy(httpClient tls_client.HttpClient) {
+	err := httpClient.SetProxy(getProxy())
+	if err != nil {
+		log.Println(err)
+		return
+	}
+}
+
+func LoadProxies() {
 	fmt.Printf("\nLoading Proxies: %s/Proxies/Proxies.txt\n", HomeDirectory)
 
 	proxyFile, err := os.Open(fmt.Sprintf("%s/proxies/proxies.txt", HomeDirectory))
@@ -62,7 +70,7 @@ func LoadProxies(HomeDirectory string, Proxies *[]Proxy) {
 			continue
 		}
 
-		*Proxies = append(*Proxies, Proxy{
+		Proxies = append(Proxies, Proxy{
 			IP:       proxyParts[0],
 			Port:     proxyParts[1],
 			Username: proxyParts[2],
@@ -74,5 +82,5 @@ func LoadProxies(HomeDirectory string, Proxies *[]Proxy) {
 		color.Red.Println("Error reading proxy file:", err)
 	}
 
-	fmt.Printf("Loaded %d Proxies from file\n\n", len(*Proxies))
+	fmt.Printf("Loaded %d Proxies from file\n\n", len(Proxies))
 }
