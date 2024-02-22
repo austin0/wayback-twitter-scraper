@@ -6,6 +6,10 @@
 *.dylib
 *.txt
 *.jpg
+proxies
+proxies/
+proxies/*
+proxies/*.txt
 
 # Test binary, built with `go test -c`
 *.test

@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	http "github.com/bogdanfinn/fhttp"
 	"github.com/corona10/goimghdr"
 	"github.com/gookit/color"
 )
@@ -52,18 +53,34 @@ func inputUsername() {
 func fetchWaybackPages() {
 	color.Cyan.Printf("Fetching list of Wayback Machine cached pages for profile: %s\n", TwitterUsername)
 
-	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
-
 	var waybackResults [][]interface{}
+	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
+	httpClient := GetProxyClient()
+	req, err := http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
 	for i := 0; i < 5; i++ {
-		resp, err := GetProxyClient().Get(WaybackResultsURL)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t", err)
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return
+			}
 			continue
 		}
 		defer resp.Body.Close()
 		if err := json.NewDecoder(resp.Body).Decode(&waybackResults); err != nil {
 			color.Red.Println("Error decoding Wayback Machine results:", err)
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return
+			}
 			continue
 		}
 		break
@@ -132,21 +149,36 @@ func parseImages() {
 func parseImagesWithRetry(combinedURL string) (string, error) {
 	var errCatcher error
 	retry := 5
+	httpClient := GetProxyClient()
+	req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
+	if err != nil {
+		return "TLS Client", err
+	}
+
 	for i := 0; i < retry; i++ {
-		resp, err := GetProxyClient().Get(combinedURL)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Println("Error fetching page content:", err)
 			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
-			errCatcher = err
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error", err
+			}
 			continue
 		}
+
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
-			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error", err
+			}
 			continue
 		}
 
@@ -155,6 +187,11 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 			color.Red.Printf("Error reading response body content for %s: %s", combinedURL, err)
 			errCatcher = err
 			time.Sleep(2 * time.Second) // Wait before retrying
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error", err
+			}
 			continue
 		}
 
@@ -165,14 +202,24 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 }
 
 func downloadImageWithRetry(imageURL string, downloadPath string) string {
-	var errCatcher error
 	retry := 5
+
+	httpClient := GetProxyClient()
+	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
+	if err != nil {
+		log.Println(err)
+	}
+
 	for i := 0; i < retry; i++ {
-		resp, err := GetProxyClient().Get(imageURL)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
-			errCatcher = err
 			time.Sleep(2 * time.Second)
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error"
+			}
 			continue
 		}
 
@@ -185,7 +232,11 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Retrying - Error fetching image: HTTP status %d\n", resp.StatusCode)
 			time.Sleep(2 * time.Second)
-			errCatcher = err
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error"
+			}
 			continue
 		}
 
@@ -193,7 +244,11 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error creating file: %s\n", err)
 			time.Sleep(2 * time.Second)
-			errCatcher = err
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error"
+			}
 			continue
 		}
 		defer file.Close()
@@ -202,13 +257,17 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error saving image: %s\n", err)
 			time.Sleep(2 * time.Second)
-			errCatcher = err
+			err = httpClient.SetProxy(getProxy())
+			if err != nil {
+				log.Println(err)
+				return "SetProxy Error"
+			}
 			continue
 		}
 		return "Success"
 	}
 	color.Red.Printf("Aborting - Error downloading image after %d retries: %s\n", retry, imageURL)
-	return errCatcher.Error()
+	return ""
 }
 
 func downloadImages() {
