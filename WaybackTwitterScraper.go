@@ -55,7 +55,7 @@ func fetchWaybackPages() {
 	for i := 0; i < 5; i++ {
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t", err)
+			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t\n", err)
 			rotateClientProxy(httpClient)
 			httpClient.CloseIdleConnections()
 			continue
@@ -139,15 +139,16 @@ func parseImages() {
 func parseImagesWithRetry(combinedURL string) (string, error) {
 	retry := 5
 	httpClient := GetProxyClient()
-	req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
-	if err != nil {
-		return "TLS Client", err
-	}
 
 	for i := 0; i < retry; i++ {
+		req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
+		if err != nil {
+			return "TLS Client", err
+		}
+
 		resp, err := httpClient.Do(req)
 		if err != nil {
-			color.Red.Printf("Error fetching page content: %s", err.Error())
+			color.Red.Printf("Error fetching page content: %s\n", err)
 			httpClient.CloseIdleConnections()
 			rotateClientProxy(httpClient)
 			continue
@@ -183,12 +184,12 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 func downloadImageWithRetry(imageURL string, downloadPath string) string {
 	retry := 5
 	httpClient := GetProxyClient()
-	req, err := http.NewRequest(http.MethodGet, imageURL, nil)
-	if err != nil {
-		log.Println(err)
-	}
 
 	for i := 0; i < retry; i++ {
+		req, err := http.NewRequest(http.MethodGet, imageURL, nil)
+		if err != nil {
+			log.Println(err)
+		}
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
