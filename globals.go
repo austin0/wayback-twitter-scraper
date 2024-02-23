@@ -13,7 +13,7 @@ var (
 	ErrImageRetries       = fmt.Errorf("failed save image after %d retries", RetryAttempts)
 
 	// Resource variables
-	Resources = []string{"media"}
+	Resources = []string{"media", "profile"}
 
 	// Proxy variables
 	Proxies       []string
@@ -23,12 +23,14 @@ var (
 	// Page variables
 	PageUnprocessed []string
 	PageProcessed   []string
+	TotalPages      = 0
 	PageMutex       sync.Mutex
 
 	// Image variables
 	ImageUnprocessed []string
 	ImageProcessed   []string
 	StoredImageMap   = make(map[string]bool)
+	TotalImages      = 0
 	TotalDownloads   = 0
 	ImageMutex       sync.Mutex
 
@@ -51,6 +53,6 @@ var (
 	FilenameRegex = regexp.MustCompile(`[A-Za-z0-9_.\-]+.jpg`)
 
 	// Other variables
-	MaxThreads    = 30
+	MaxThreads    = 50
 	RetryAttempts = 5
 )

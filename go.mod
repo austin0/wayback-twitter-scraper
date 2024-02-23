@@ -22,7 +22,7 @@ require (
 
 require (
 	github.com/bogdanfinn/fhttp v0.5.27
-	github.com/bogdanfinn/tls-client v1.7.3-0.20240125154042-1e778ee6fd86
+	github.com/bogdanfinn/tls-client v1.7.3-proxy-connect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sys v0.17.0 // indirect
 )

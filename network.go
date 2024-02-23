@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -23,9 +23,9 @@ type Proxy struct {
 
 var (
 	transportOptions = tls_client.TransportOptions{
-		//MaxIdleConnsPerHost: -1,
-		//DisableKeepAlives:      true,
+		DisableKeepAlives:      true,
 		MaxResponseHeaderBytes: 1 << 26,
+		DisableCompression:     true,
 	}
 
 	requestHeaders = http.Header{
@@ -42,17 +42,28 @@ var (
 func GetProxyClient() tls_client.HttpClient {
 	proxy := getProxy()
 
+	customRedirect := func(req *http.Request, via []*http.Request) error {
+		// On redirect replace the old request with a new one but with the location from the redirect to prevent TLS EOF errors
+		// Errors come from https://github.com/bogdanfinn/fhttp/blob/master/transfer.go#L205 where either proxies and or concurrency push the redirect transfer above 200ms
+		req.Header = via[0].Header
+		req.Body = nil
+		req.ContentLength = 0
+		req = req.Clone(context.Background())
+		return nil
+	}
+
 	options := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Firefox_120),
 		tls_client.WithProxyUrl(proxy),
 		tls_client.WithTransportOptions(&transportOptions),
 		tls_client.WithDefaultHeaders(requestHeaders),
+		tls_client.WithCustomRedirectFunc(customRedirect),
 	}
 
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 	if err != nil {
-		color.Magenta.Printf("Retrying - Error creating HTTP client: %s\n", err)
+		color.Magenta.Printf("Retrying - Error creating HTTP client: %+v\n", err)
 		return GetProxyClient()
 	}
 
@@ -83,7 +94,7 @@ func rotateClientProxy(httpClient tls_client.HttpClient) {
 
 	err := httpClient.SetProxy(getProxy())
 	if err != nil {
-		log.Println(err)
+		color.Red.Printf("Error rotating proxy: %+v\n", err)
 		return
 	}
 }
@@ -108,7 +119,7 @@ func LoadProxies() {
 
 	proxyFile, err := os.Open(fmt.Sprintf("%s/proxies/proxies.txt", HomeDirectory))
 	if err != nil {
-		color.Red.Println("Error opening proxy file:", err)
+		color.Red.Printf("Error opening proxy file: %+v\n", err)
 		os.Exit(1)
 	}
 

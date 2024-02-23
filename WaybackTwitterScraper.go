@@ -54,7 +54,7 @@ func fetchWaybackPages() {
 	httpClient := GetProxyClient()
 	defer returnProxy(httpClient)
 
-	req, err = http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
+	req, err = http.NewRequest(http.MethodGet, WaybackResultsURL, http.NoBody)
 	if err != nil {
 		log.Println(err)
 		return
@@ -68,6 +68,7 @@ func fetchWaybackPages() {
 			continue
 		}
 		defer resp.Body.Close()
+
 		if err := json.NewDecoder(resp.Body).Decode(&waybackResults); err != nil {
 			color.Red.Println("Error decoding Wayback Machine results:", err)
 			rotateClientProxy(httpClient)
@@ -83,11 +84,14 @@ func fetchWaybackPages() {
 		}
 	}
 
-	if len(PageUnprocessed) == 0 {
-		color.Red.Printf("Found %d cached Wayback Machine pages - exiting\n", len(PageUnprocessed))
+	TotalPages = len(PageUnprocessed)
+
+	if TotalPages == 0 {
+		color.Red.Printf("Found %d cached Wayback Machine pages - exiting\n", TotalPages)
 		os.Exit(0)
 	} else {
-		color.Cyan.Printf("Found %d cached Wayback Machine pages\n", len(PageUnprocessed))
+
+		color.Cyan.Printf("Found %d cached Wayback Machine pages\n", TotalPages)
 	}
 }
 
@@ -150,7 +154,8 @@ func parseImages() {
 	}
 	wg.Wait()
 
-	color.Green.Printf("\nFound %d cached images for: %s\n", len(ImageUnprocessed), TwitterUsername)
+	TotalImages = len(ImageUnprocessed)
+	color.Green.Printf("\nFound %d cached images for: %s\n", TotalImages, TwitterUsername)
 }
 
 func parseImagesWithRetry(combinedURL string) (string, error) {
@@ -162,20 +167,19 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 	defer returnProxy(httpClient)
 
 	for i := 0; i < RetryAttempts; i++ {
-		req, err = http.NewRequest(http.MethodGet, combinedURL, nil)
+		req, err = http.NewRequest(http.MethodGet, combinedURL, http.NoBody)
 		if err != nil {
-			color.Red.Printf("Error building parse request: %s\n", err)
+			color.Red.Printf("Error building parse request: %+v\n", err)
 			rotateClientProxy(httpClient)
 			continue
 		}
 
 		resp, err = httpClient.Do(req)
 		if err != nil {
-			color.Red.Printf("Error fetching page content: %s\n", err)
+			color.Red.Printf("Error fetching page content: %+v\n", err)
 			rotateClientProxy(httpClient)
 			continue
 		}
-
 		defer resp.Body.Close()
 
 		if resp.StatusCode == 404 {
@@ -210,13 +214,14 @@ func downloadImageWithRetry(imageURL string, downloadPath string) error {
 	defer returnProxy(httpClient)
 
 	for i := 0; i < RetryAttempts; i++ {
-		req, err = http.NewRequest(http.MethodGet, imageURL, nil)
+		req, err = http.NewRequest(http.MethodGet, imageURL, http.NoBody)
 		if err != nil {
-			log.Println(err)
+			color.Red.Printf("Retrying - Error building image download request: %s\n", err)
+			continue
 		}
 		resp, err = httpClient.Do(req)
 		if err != nil {
-			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
+			color.Red.Printf("Retrying - Error fetching image: %+v\n", err)
 			rotateClientProxy(httpClient)
 			continue
 		}
@@ -261,7 +266,7 @@ func downloadImageWithRetry(imageURL string, downloadPath string) error {
 }
 
 func downloadImages() {
-	color.LightGreen.Println("Downloading indentified images from Wayback Machine Cache\n")
+	color.LightGreen.Println("Downloading identified images from Wayback Machine Cache\n")
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, MaxThreads) // Limit to "MaxThreads" concurrent goroutines
@@ -294,13 +299,16 @@ func downloadImages() {
 			err := downloadImageWithRetry(combinedURL, downloadPath)
 			switch err {
 			case nil:
-				TotalDownloads += 1
 				ImageMutex.Lock()
+				TotalDownloads += 1
 				ImageProcessed = append(ImageProcessed, imageURL)
 				ImageMutex.Unlock()
 				color.Green.Printf("%s - Saved %s\n", GetImageProgress(), imageURL)
 				return
 			case ErrPageMissingContent:
+				ImageMutex.Lock()
+				ImageProcessed = append(ImageProcessed, imageURL)
+				ImageMutex.Unlock()
 				color.FgDarkGray.Printf("Skipping %s - not a valid image file\n", imageURL)
 				return
 			default:
@@ -314,15 +322,14 @@ func downloadImages() {
 	}
 	wg.Wait()
 
-	color.Green.Printf("\nSaved %d images for username: %s\n", TotalDownloads, TwitterUsername)
+	color.Green.Printf("\nSaved %d images for: %s", TotalDownloads, TwitterUsername)
 }
-
 func purgeCorrupted() {
-	color.Gray.Printf("\nPurging any corrupted images in %s\n", UsernameLocation)
+	color.Gray.Printf("Purging any corrupted images in %s\n", UsernameLocation)
 
 	images, err := filepath.Glob(fmt.Sprintf("%s/images/%s/*.jpg", HomeDirectory, TwitterUsername))
 	if err != nil {
-		color.Red.Println("Error listing image files:", err)
+		color.Red.Printf("Error listing image files: %+v\n", err)
 		return
 	}
 
@@ -340,18 +347,22 @@ func purgeCorrupted() {
 					color.Red.Printf("Error removing corrupted image: %s\n", err)
 					continue
 				}
-				color.Green.Printf("Removed corrupted image: %s\n", image)
+				color.Yellow.Printf("Removed corrupted image: %s\n", image)
 				purgedCounter += 1
 			}
 		}
 	}
 
-	color.Green.Println(`No corrupted images found - success!`)
+	if purgedCounter == 0 {
+		color.Green.Printf("No corrupted images found - success!\n")
+	} else {
+		color.Green.Printf("Purged %d corrupted images\n", purgedCounter)
+	}
 }
 
 func createReport() {
 	header := fmt.Sprintf(`=== Wayback Report - %s - %s`, TwitterUsername, GetCurrentDate())
-	totalProcessed := fmt.Sprintf("Pages Parsed: %d | Images Proccesed: %d | Downloaded Images: %d", len(PageProcessed), len(ImageProcessed), TotalDownloads)
+	totalProcessed := fmt.Sprintf("Pages Parsed: %d | Images Proccesed: %d | Downloaded Images: %d", TotalPages, TotalImages, TotalDownloads)
 	pageString := ""
 	for _, link := range PageProcessed {
 		pageString += fmt.Sprintf("%s\n", link)
@@ -365,16 +376,16 @@ func createReport() {
 
 	reportFile, err := os.Create(fmt.Sprintf("%s/%s-report.txt", UsernameLocation, GetCurrentDate()))
 	if err != nil {
-		color.Red.Println("Error creating report file:", err)
+		color.Red.Printf("Error creating report file: %+v\n", err)
 		return
 	}
 	defer reportFile.Close()
 
 	_, err = reportFile.WriteString(report)
 	if err != nil {
-		color.Red.Println("Error writing to report file:", err)
+		color.Red.Printf("Error writing to report file: %+v\n", err)
 		return
 	}
 
-	color.Magenta.Printf("\nReport created: %s/%s-report.txt\n", UsernameLocation, GetCurrentDate())
+	color.Magenta.Printf("Report created: %s/%s-report.txt\n", UsernameLocation, GetCurrentDate())
 }

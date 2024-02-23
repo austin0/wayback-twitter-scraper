@@ -63,11 +63,11 @@ func addSizeSpread(profileURLs []string) []string {
 }
 
 func GetPageProgress() string {
-	return fmt.Sprintf("[%d / %d]", len(PageProcessed), (len(PageUnprocessed) + len(PageProcessed)))
+	return fmt.Sprintf("[%d / %d]", len(PageProcessed), TotalPages)
 }
 
 func GetImageProgress() string {
-	return fmt.Sprintf("[%d / %d]", len(ImageProcessed), (len(ImageUnprocessed) + len(ImageProcessed)))
+	return fmt.Sprintf("[%d / %d]", len(ImageProcessed), TotalImages)
 }
 
 func Pop(slice []string) ([]string, string) {
