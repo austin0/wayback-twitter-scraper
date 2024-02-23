@@ -48,7 +48,7 @@ func GetProxyClient() tls_client.HttpClient {
 		req.Header = via[0].Header
 		req.Body = nil
 		req.ContentLength = 0
-		req = req.Clone(context.Background())
+		*req = *req.Clone(context.Background())
 		return nil
 	}
 

@@ -18,20 +18,26 @@ import (
 
 func main() {
 	log.SetOutput(os.Stdout)
-	DrawTitle()            // Draw the title of the program
-	inputUsername()        // Prompt user for Twitter username
-	CreateDirectories()    // Create necessary directories for storing images
-	LoadProxies()          // Load proxies from the proxies.txt file
-	CreateStoredImageMap() // Create an in-memory map of stored images
-	fetchWaybackPages()    // Fetch Wayback Machine cached pages
-	parseImages()          // Parse images from the cached pages
-	RemoveCommonItems()    // Remove previously downloaded images from the unprocessedImages list
-	downloadImages()       // Download images from the Wayback Machine cache
-	purgeCorrupted()       // Purge any corrupted images
-	createReport()         // Create a report of the downloaded images
+	DrawTitle()                    // Draw the title of the program
+	inputUsername("proxyunbanned") // Prompt user for Twitter username
+	CreateDirectories()            // Create necessary directories for storing images
+	LoadProxies()                  // Load proxies from the proxies.txt file
+	CreateStoredImageMap()         // Create an in-memory map of stored images
+	fetchWaybackPages()            // Fetch Wayback Machine cached pages
+	parseImages()                  // Parse images from the cached pages
+	RemoveCommonItems()            // Remove previously downloaded images from the unprocessedImages list
+	downloadImages()               // Download images from the Wayback Machine cache
+	purgeCorrupted()               // Purge any corrupted images
+	createReport()                 // Create a report of the downloaded images
 }
 
-func inputUsername() {
+func inputUsername(defaultUser string) {
+	if defaultUser != "" {
+		TwitterUsername = defaultUser
+		WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
+		return
+	}
+
 	fmt.Print("\nEnter a Twitter username: ")
 	fmt.Scanln(&TwitterUsername)
 
@@ -63,14 +69,14 @@ func fetchWaybackPages() {
 	for i := 0; i < 5; i++ {
 		resp, err = httpClient.Do(req)
 		if err != nil {
-			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t\n", err)
+			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %+v\n", err)
 			rotateClientProxy(httpClient)
 			continue
 		}
 		defer resp.Body.Close()
 
 		if err := json.NewDecoder(resp.Body).Decode(&waybackResults); err != nil {
-			color.Red.Println("Error decoding Wayback Machine results:", err)
+			color.Red.Printf("Error decoding Wayback Machine results: %+v\n", err)
 			rotateClientProxy(httpClient)
 			continue
 		}
@@ -144,7 +150,7 @@ func parseImages() {
 				case "media":
 					resourceURLs = MediaRegex.FindAllString(htmlContent, -1)
 				case "profile":
-					resourceURLs = addSizeSpread(ProfileRegex.FindAllString(htmlContent, -1))
+					resourceURLs = ProfileRegex.FindAllString(htmlContent, -1)
 				}
 				ImageMutex.Lock()
 				ImageUnprocessed = RemoveDuplicates(append(ImageUnprocessed, resourceURLs...))
@@ -322,7 +328,7 @@ func downloadImages() {
 	}
 	wg.Wait()
 
-	color.Green.Printf("\nSaved %d images for: %s", TotalDownloads, TwitterUsername)
+	color.Green.Printf("\nSaved %d images for: %s\n", TotalDownloads, TwitterUsername)
 }
 func purgeCorrupted() {
 	color.Gray.Printf("Purging any corrupted images in %s\n", UsernameLocation)

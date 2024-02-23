@@ -51,17 +51,6 @@ func GetCurrentDate() string {
 	return dateString
 }
 
-func addSizeSpread(profileURLs []string) []string {
-	for _, profileURL := range profileURLs {
-		baseProfile := truncateString(profileURL, 65)
-		profileURLs = append(profileURLs, fmt.Sprintf(`%s.jpg`, baseProfile))
-		profileURLs = append(profileURLs, fmt.Sprintf(`%s_400x400.jpg`, baseProfile))
-		profileURLs = append(profileURLs, fmt.Sprintf(`%s_normal.jpg`, baseProfile))
-		profileURLs = append(profileURLs, fmt.Sprintf(`%s_bigger.jpg`, baseProfile))
-	}
-	return profileURLs
-}
-
 func GetPageProgress() string {
 	return fmt.Sprintf("[%d / %d]", len(PageProcessed), TotalPages)
 }
@@ -77,13 +66,6 @@ func Pop(slice []string) ([]string, string) {
 	popped := slice[len(slice)-1]
 	slice = slice[:len(slice)-1]
 	return slice, popped
-}
-
-func truncateString(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }
 
 // Removes duplicate items from a slice
