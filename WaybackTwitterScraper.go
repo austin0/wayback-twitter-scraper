@@ -17,6 +17,7 @@ import (
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
 	DrawTitle()            // Draw the title of the program
 	inputUsername()        // Prompt user for Twitter username
 	CreateDirectories()    // Create necessary directories for storing images
@@ -38,26 +39,32 @@ func inputUsername() {
 		fmt.Print("Enter a Twitter username: ")
 		fmt.Scanln(&TwitterUsername)
 	}
+
+	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
 }
 
 func fetchWaybackPages() {
 	color.Cyan.Printf("Fetching list of Wayback Machine cached pages for profile: %s\n", TwitterUsername)
 
 	var waybackResults [][]interface{}
-	WaybackResultsURL = fmt.Sprintf("https://web.archive.org/web/timemap/json?url=twitter.com/%s&matchType=prefix", TwitterUsername)
+	var req *http.Request
+	var resp *http.Response
+	var err error
+
 	httpClient := GetProxyClient()
-	req, err := http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
+	defer returnProxy(httpClient)
+
+	req, err = http.NewRequest(http.MethodGet, WaybackResultsURL, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
 	for i := 0; i < 5; i++ {
-		resp, err := httpClient.Do(req)
+		resp, err = httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching Wayback Machine results: %t\n", err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 		defer resp.Body.Close()
@@ -94,7 +101,9 @@ func parseImages() {
 		wg.Add(1)
 		var pageURL string
 
+		PageMutex.Lock()
 		PageUnprocessed, pageURL = Pop(PageUnprocessed)
+		PageMutex.Unlock()
 
 		go func(pageURL string) { // Pass pageURL as an argument
 			defer wg.Done()
@@ -108,14 +117,20 @@ func parseImages() {
 			htmlContent, err := parseImagesWithRetry(combinedURL)
 			switch err {
 			case nil:
+				PageMutex.Lock()
 				PageProcessed = append(PageProcessed, pageURL)
+				PageMutex.Unlock()
 				color.Green.Printf("%s - Successfully parsed %s\n", GetPageProgress(), pageURL)
-			case http.ErrNotSupported:
+			case ErrPageMissingContent:
 				color.FgDarkGray.Printf("Skipping %s - not a valid page\n", pageURL)
 				return
+			case ErrPageRetries:
+				fallthrough
 			default:
-				fmt.Printf("Error parsing images from %s - %s\n", combinedURL, err)
+				color.Red.Printf("Error parsing images from %s - %s\n", combinedURL, err)
+				PageMutex.Lock()
 				PageUnprocessed = append(PageUnprocessed, pageURL)
+				PageMutex.Unlock()
 				return
 			}
 
@@ -127,7 +142,9 @@ func parseImages() {
 				case "profile":
 					resourceURLs = addSizeSpread(ProfileRegex.FindAllString(htmlContent, -1))
 				}
+				ImageMutex.Lock()
 				ImageUnprocessed = RemoveDuplicates(append(ImageUnprocessed, resourceURLs...))
+				ImageMutex.Unlock()
 			}
 		}(pageURL)
 	}
@@ -137,19 +154,24 @@ func parseImages() {
 }
 
 func parseImagesWithRetry(combinedURL string) (string, error) {
-	retry := 5
-	httpClient := GetProxyClient()
+	var req *http.Request
+	var resp *http.Response
+	var err error
 
-	for i := 0; i < retry; i++ {
-		req, err := http.NewRequest(http.MethodGet, combinedURL, nil)
+	httpClient := GetProxyClient()
+	defer returnProxy(httpClient)
+
+	for i := 0; i < RetryAttempts; i++ {
+		req, err = http.NewRequest(http.MethodGet, combinedURL, nil)
 		if err != nil {
-			return "TLS Client", err
+			color.Red.Printf("Error building parse request: %s\n", err)
+			rotateClientProxy(httpClient)
+			continue
 		}
 
-		resp, err := httpClient.Do(req)
+		resp, err = httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Error fetching page content: %s\n", err)
-			httpClient.CloseIdleConnections()
 			rotateClientProxy(httpClient)
 			continue
 		}
@@ -157,13 +179,12 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode == 404 {
-			return "404 - Not a valid page", http.ErrNotSupported
+			return "404 - Not a valid page", ErrPageMissingContent
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Error: HTTP request failed with status code %d\n", resp.StatusCode)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 
@@ -171,30 +192,32 @@ func parseImagesWithRetry(combinedURL string) (string, error) {
 		if err != nil {
 			color.Red.Printf("Error reading response body content for %s: %s\n", combinedURL, err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 
 		htmlContent := string(body)
 		return htmlContent, nil
 	}
-	return "", fmt.Errorf("error fetching page content after %d retries", retry)
+	return "", ErrPageRetries
 }
 
-func downloadImageWithRetry(imageURL string, downloadPath string) string {
-	retry := 5
-	httpClient := GetProxyClient()
+func downloadImageWithRetry(imageURL string, downloadPath string) error {
+	var req *http.Request
+	var resp *http.Response
+	var err error
 
-	for i := 0; i < retry; i++ {
-		req, err := http.NewRequest(http.MethodGet, imageURL, nil)
+	httpClient := GetProxyClient()
+	defer returnProxy(httpClient)
+
+	for i := 0; i < RetryAttempts; i++ {
+		req, err = http.NewRequest(http.MethodGet, imageURL, nil)
 		if err != nil {
 			log.Println(err)
 		}
-		resp, err := httpClient.Do(req)
+		resp, err = httpClient.Do(req)
 		if err != nil {
 			color.Red.Printf("Retrying - Error fetching image: %s\n", err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 
@@ -204,18 +227,16 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error reading image: %s\n", err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 
 		if resp.StatusCode == 404 && resp.Header.Get("Content-Type") == "text/html" {
-			return "404 - Not an image resource"
+			return ErrPageMissingContent
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			color.Red.Printf("Retrying - Error fetching image: HTTP status %d\n", resp.StatusCode)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 
@@ -223,7 +244,6 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error creating file: %s\n", err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
 		defer file.Close()
@@ -232,13 +252,12 @@ func downloadImageWithRetry(imageURL string, downloadPath string) string {
 		if err != nil {
 			color.Red.Printf("Retrying - Error saving image: %s\n", err)
 			rotateClientProxy(httpClient)
-			httpClient.CloseIdleConnections()
 			continue
 		}
-		return "Success"
+		return nil
 	}
-	color.Red.Printf("Aborting - Error downloading image after %d retries: %s\n", retry, imageURL)
-	return ""
+	color.Red.Printf("Aborting - Error downloading image after %d retries: %s\n", RetryAttempts, imageURL)
+	return ErrImageRetries
 }
 
 func downloadImages() {
@@ -252,7 +271,9 @@ func downloadImages() {
 		var imageURL string
 		var imageType string
 
+		ImageMutex.Lock()
 		ImageUnprocessed, imageURL = Pop(ImageUnprocessed)
+		ImageMutex.Unlock()
 
 		if strings.Contains(imageURL, "media") {
 			imageType = "media"
@@ -270,19 +291,23 @@ func downloadImages() {
 			combinedURL := WaybackPrefix + imageURL
 			downloadPath := fmt.Sprintf("%s/%s/%s", UsernameLocation, imageType, imageName)
 
-			resultString := downloadImageWithRetry(combinedURL, downloadPath)
-			switch resultString {
-			case "Success":
+			err := downloadImageWithRetry(combinedURL, downloadPath)
+			switch err {
+			case nil:
 				TotalDownloads += 1
+				ImageMutex.Lock()
 				ImageProcessed = append(ImageProcessed, imageURL)
+				ImageMutex.Unlock()
 				color.Green.Printf("%s - Saved %s\n", GetImageProgress(), imageURL)
 				return
-			case "404 - Not an image resource":
+			case ErrPageMissingContent:
 				color.FgDarkGray.Printf("Skipping %s - not a valid image file\n", imageURL)
 				return
 			default:
-				color.Red.Printf("Error downloading image from %s - %s\n", combinedURL, resultString)
+				color.Red.Printf("Error downloading image from %s - %s\n", combinedURL, err.Error())
+				ImageMutex.Lock()
 				ImageUnprocessed = append(ImageUnprocessed, imageURL)
+				ImageMutex.Unlock()
 				return
 			}
 		}(imageURL, imageType)

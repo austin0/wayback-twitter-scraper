@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"strings"
+	"time"
 
+	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/gookit/color"
@@ -20,42 +21,86 @@ type Proxy struct {
 	Password string
 }
 
-var transportOptions = tls_client.TransportOptions{
-	MaxIdleConnsPerHost: -1,
-	DisableKeepAlives:   true,
-	MaxConnsPerHost:     0,
-}
+var (
+	transportOptions = tls_client.TransportOptions{
+		//MaxIdleConnsPerHost: -1,
+		//DisableKeepAlives:      true,
+		MaxResponseHeaderBytes: 1 << 26,
+	}
+
+	requestHeaders = http.Header{
+		"accept":     {"*/*"},
+		"user-agent": {"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0"},
+		http.HeaderOrderKey: {
+			"accept",
+			"user-agent",
+		},
+	}
+)
 
 // GetProxyClient() returns a new HTTP client with a random proxy from the list
 func GetProxyClient() tls_client.HttpClient {
+	proxy := getProxy()
 
 	options := []tls_client.HttpClientOption{
 		tls_client.WithTimeoutSeconds(30),
-		tls_client.WithClientProfile(profiles.Chrome_120),
-		tls_client.WithProxyUrl(getProxy()),
+		tls_client.WithClientProfile(profiles.Firefox_120),
+		tls_client.WithProxyUrl(proxy),
 		tls_client.WithTransportOptions(&transportOptions),
+		tls_client.WithDefaultHeaders(requestHeaders),
 	}
 
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 	if err != nil {
-		log.Println(err)
+		color.Magenta.Printf("Retrying - Error creating HTTP client: %s\n", err)
+		return GetProxyClient()
 	}
 
 	return client
 }
 
 func getProxy() string {
-	proxy := Proxies[rand.Intn(len(Proxies))]
-	proxyString := fmt.Sprintf("http://%s:%s@%s:%s", proxy.Username, proxy.Password, proxy.IP, proxy.Port)
-	return proxyString
+	var proxy string
+
+	for len(Proxies) == 0 {
+		color.Red.Println("No proxies available, waiting for one to become available")
+		time.Sleep(5 * time.Second)
+	}
+
+	ProxyMutex.Lock()
+
+	proxy = Proxies[len(Proxies)-1]
+	Proxies = Proxies[:len(Proxies)-1]
+	ProxiesActive = append(ProxiesActive, proxy)
+
+	ProxyMutex.Unlock()
+
+	return proxy
 }
 
 func rotateClientProxy(httpClient tls_client.HttpClient) {
+	returnProxy(httpClient)
+
 	err := httpClient.SetProxy(getProxy())
 	if err != nil {
 		log.Println(err)
 		return
 	}
+}
+
+func returnProxy(httpClient tls_client.HttpClient) {
+	ProxyMutex.Lock()
+
+	activeProxy := httpClient.GetProxy()
+	for i, proxy := range ProxiesActive {
+		if proxy == activeProxy {
+			ProxiesActive = append(ProxiesActive[:i], ProxiesActive[i+1:]...)
+			Proxies = append(Proxies, proxy)
+			break
+		}
+	}
+
+	ProxyMutex.Unlock()
 }
 
 func LoadProxies() {
@@ -72,17 +117,12 @@ func LoadProxies() {
 	scanner := bufio.NewScanner(proxyFile)
 	for scanner.Scan() {
 		proxyParts := strings.Split(scanner.Text(), ":")
+		proxyString := fmt.Sprintf("http://%s:%s@%s:%s", proxyParts[2], proxyParts[3], proxyParts[0], proxyParts[1])
+		Proxies = append(Proxies, proxyString)
 		if len(proxyParts) != 4 {
 			color.Yellow.Println("Invalid proxy format:", scanner.Text())
 			continue
 		}
-
-		Proxies = append(Proxies, Proxy{
-			IP:       proxyParts[0],
-			Port:     proxyParts[1],
-			Username: proxyParts[2],
-			Password: proxyParts[3],
-		})
 	}
 
 	if err := scanner.Err(); err != nil {
