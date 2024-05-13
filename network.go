@@ -73,6 +73,10 @@ func GetProxyClient() tls_client.HttpClient {
 func getProxy() string {
 	var proxy string
 
+	if !UseProxies {
+		return ""
+	}
+
 	for len(Proxies) == 0 {
 		color.Red.Println("No proxies available, waiting for one to become available")
 		time.Sleep(5 * time.Second)
@@ -115,6 +119,11 @@ func returnProxy(httpClient tls_client.HttpClient) {
 }
 
 func LoadProxies() {
+	if !CheckIfProxiesExist() {
+		color.Red.Println("No proxies found, continuing without...")
+		return
+	}
+
 	fmt.Printf("\nLoading Proxies: %s/Proxies/Proxies.txt\n", HomeDirectory)
 
 	proxyFile, err := os.Open(fmt.Sprintf("%s/proxies/proxies.txt", HomeDirectory))

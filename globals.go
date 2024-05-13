@@ -19,6 +19,7 @@ var (
 	Proxies       []string
 	ProxiesActive []string
 	ProxyMutex    sync.Mutex
+	UseProxies    bool
 
 	// Page variables
 	PageUnprocessed []string

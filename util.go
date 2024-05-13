@@ -98,3 +98,12 @@ func RemoveCommonItems() {
 	color.Magenta.Printf("Filtered %d previously downloaded images - %s\n", len(ImageUnprocessed)-len(tempSlice), UsernameLocation)
 	ImageUnprocessed = tempSlice
 }
+
+func CheckIfProxiesExist() bool {
+	proxyFilePath := fmt.Sprintf("%s/proxies/proxies.txt", HomeDirectory)
+	if _, err := os.Stat(proxyFilePath); err == nil {
+		return true
+	}
+	UseProxies = false
+	return false
+}
