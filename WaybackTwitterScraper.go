@@ -19,7 +19,7 @@ import (
 func main() {
 	log.SetOutput(os.Stdout)
 	DrawTitle()                    // Draw the title of the program
-	inputUsername("proxyunbanned") // Prompt user for Twitter username
+	inputUsername(TwitterUsername) // Prompt user for Twitter username
 	CreateDirectories()            // Create necessary directories for storing images
 	LoadProxies()                  // Load proxies from the proxies.txt file
 	CreateStoredImageMap()         // Create an in-memory map of stored images
